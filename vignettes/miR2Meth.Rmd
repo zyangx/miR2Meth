@@ -1,0 +1,175 @@
+---
+title: "miR2Meth: Dissecting DNA Methylation Heterogenity at miRNA promoters"
+author: "Zhen Yang"
+date: "`r Sys.Date()`"
+package: "`r pkg_ver('miR2Meth')`"
+
+output:
+  BiocStyle::html_document
+
+vignette: >
+  %\VignetteIndexEntry{miR2Meth-Dissecting DNA Methylation Heterogenity at miRNA promoters}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+# Introduction
+
+MicroRNAs (miRNAs) have been widely recognized for their important roles in gene expression regulation. The aberrant expression of miRNAs has been observed in prevalent cancer types, which indicated their transcription be tightly regulated. DNA methylation is an epigenetic mechanism that is involved in the process of transcriptional regulation. The resemblance of the biogenesis process of miRNAs to that of protein coding genes make them also the targets of DNA methylation regulation. The silencing of individual miRNA due to aberrant DNA methylation events in promoters have been demonstrated in many cancer types. However, the exploration to miRNA dysregulation caused by abnormal DNA methylation is very limited due to the lack of available research tools.
+
+The Illumina Infinium Methylation BeadChips have been the most widely used platform for genome-wide DNA methylome profiling due to the cost effective and ease of use. The Infinium BeadChips have evolved from the first generation of HM27, and the later HM450, EPIC, to he most recent EPICv2 assays, which represents a more comprehensive coverage of the human genome. The high-density probe design of the assays allows them to cover a large portion of the cis-regulatory elements in non-coding regions. In such case, we developed a reannotation strategy to locate Illumina BeadChip probes of **450k**, **EPIC** or **EPICv2** assays to miRNA promoters in order to get their methylation value. This vignette demonstrates how to easily use the **miR2Meth** package to get the methylation value for individual miRNA and identify the differentially methylated miRNAs.
+
+To show how to use this package, we use the 450k assay data from 10 samples of breast cancer patients of TCGA (Normal vs. Cancer), as well as the miRNA expression matrix from matched samples for demonstration. Please note that here we do not cover the steps of raw chip data processing as there are several R packages available that been developed for analysing such data, including *minfi*, *ChAMP*, or *wateRmelon*, etc. We will start from probe-level methylation matrix of beta values for demonstration. We suggest to use *BMIQ* corrected array data or the analysis, which was used in our example, but the data matrix based on *M-value* (logit-transform of beta) is also applicable to this package.
+
+We first load **miR2Meth** package, and the example 450k matrix data.
+```{r load, eval=TRUE, echo=T, message=FALSE, warning=FALSE}
+library(miR2Meth)
+data(beta450k.m)
+```
+
+## DNA methylation beta value matrix
+A subset of the TCGA BRCA 450k methylation data, stored in beta450k.m, consists of a CpG (rows) by sample (columns) matrix with beta values:
+```{r }
+# print example values in the data matrix
+head(beta450k.m)
+
+# check sample names of the data matrix
+colnames(beta450k.m)
+```
+
+## Obtain miRNA level methylation matrix
+This package provides a simple way to obtain methylation matrix of miRNAs by using the function **probe2miR**. This function takes the probe level mathylation matrix as input and filter the probes mapping to miRNA promoters and calculate methylation value for each individual miRNA, and finally return the miRNA methylation matrix. Besides the raw probe level methylation matrix, users should also specify the array type, whether the mature miRNA or precursor miRNA methylation need to be calculated, the boundary of the promoter region and the calculation method by different parameters.
+```{r }
+# obtain methylation values at miRNA level by average beta values from probes within each miRNA promoter
+miRBeta.m <- probe2miR(beta=beta450k.m, array="450k", 
+                       type="Mature", upstream=2000,
+                       downstream=2000, method="mean")
+
+# print example values for the obtained data matrix
+head(miRBeta.m)
+```
+Please **NOTE** that the EPICv2 assay utilize a novel probe naming system which comprise the 'Name' used by previous generations of 450k and EPIC assays (cg+8-digit number) and a four-character suffix encodes additional information (e.g. 'cg09617579_BC12'). To enable cross-platform comparison, we provide another option for users to specify whether to use the corresponding probe naming system by the previous generations arrays. Users should specify this by the parameter "IlmnID" when EPICv2 assay data used as input.
+
+## miRNA promoters differential methylation analysis
+miR2Meth provides a function to identify different methylated miRNA promoters. For each miRNA, limma, t test or wilcox test can be used for differential methylation analysis in relation to the phenotype of interest. For the cancer-normal samples from TCGA, we can generate a phenotype vector for the following analysis. 
+```{r }
+# check col names of the data matrix obtained
+colnames(miRBeta.m)
+
+# construct a phenotype vector to indicate the sample type
+pheno.v  <- c(rep("Normal", 5), rep("Cancer", 5))
+pheno.v
+
+# To get differential methylation statistics
+statM.df <- diffmiR(miRBeta.m, pheno.v, case = "Cancer", control = "Normal", 
+                    method="limma")
+
+head(statM.df)
+```
+
+Then we can check the differential methylation pattern by a Volcano plot.
+```{r out.width="500px", out.height="250px", fig.align='left'}
+library("EnhancedVolcano")
+p1 <- EnhancedVolcano(statM.df, lab = rownames(statM.df), 
+    x = 'logFC', y = 'P.Value', title = 'Differential methylation', subtitle = NULL,
+    xlim = c(-1, 1),  ylim = c(0, -log10(10e-8)),
+    pCutoff = 10e-3,
+    FCcutoff = 0.2, # FCcutoff here is actually the average methylation difference between groups
+    pointSize = 1)
+p1
+```
+And to generate differential methylation heatmap.
+```{r out.width="500px", out.height="400px", fig.align='left'}
+library("RColorBrewer")
+library("pheatmap")
+pheatmap(miRBeta.m[rownames(statM.df[which(statM.df[,5] < 0.05),]), ], 
+         treeheight_row=60, treeheight_col=30,   scale="row",
+         show_rownames = F, show_colnames = T, cluster_cols = TRUE, 
+         color=rev(colorRampPalette(brewer.pal(10, "RdBu"))(80)) )
+```
+
+Or to check the differential methylation for individual miRNA by boxplot.
+```{r out.width="400px", out.height="180px", fig.align='center'}
+boxplot(miRBeta.m['hsa-miR-1273h-3p', ] ~ pheno.v, col=c("blue", "red"), 
+        main="hsa-miR-1273h-3p", ylab="avBeta", xlab=NA)
+```
+
+# Integrative analysis with miRNA expression data
+Users can also perform an integrative analysis with the expression data if it is available. Here we use bulk miRNA-seq expression data which normalized as RPM value from matched samples of the DNA methylaiton data for a simple demonstration.
+```{r }
+data(miRExpRPM.m)
+
+# print example values in the data matrix
+head(miRExpRPM.m)
+```
+We first perform a log2-transformation of the expression matrix with pseudo count 1 added.
+```{r }
+logExp.m <- log2(miRExpRPM.m + 1)
+```
+
+Then we can perform a differential expression for the miRNAs 
+
+```{r }
+# To get differential expression statistics
+statE.df <- diffmiR(logExp.m, pheno.v, case = "Cancer", control = "Normal", 
+                    method="limma")
+
+head(statE.df)
+```
+
+To check the differential expression pattern by a Volcano plot.
+```{r out.width="500px", out.height="250px", fig.align='left'}
+p2 <- EnhancedVolcano(statE.df, lab = rownames(statE.df), 
+    x = 'logFC', y = 'P.Value', title = 'Differential expression', subtitle = NULL,
+    xlim = c(-5.5, 5.5),  ylim = c(0, -log10(10e-7)),
+    pCutoff = 10e-3,
+    FCcutoff = 1.5, 
+    pointSize = 1)
+p2
+```
+
+Similarly we can generate differential expression heatmap.
+```{r out.width="500px", out.height="400px", fig.align='left'}
+pheatmap(logExp.m[rownames(statE.df[which(statE.df[,5] < 0.05),]), ], 
+         treeheight_row=60, treeheight_col=30,   scale="row",
+         show_rownames = F, show_colnames = T, cluster_cols = TRUE, 
+         color=rev(colorRampPalette(brewer.pal(10, "RdYlGn"))(80)) )
+```
+
+And to check the differential expression for individual miRNA by boxplot.
+```{r out.width="400px", out.height="180px", fig.align='center'}
+boxplot(logExp.m['hsa-miR-125b-5p', ] ~ pheno.v, col=c("greenyellow", "orange"), 
+        main="hsa-miR-125b-5p", ylab="Exp", xlab=NA)
+```
+
+Finally, we evaluate the impact of DNA methylaiton of miRNA promoters on their expression by an integrative analysis to determine the intersection between the differentially methylated miRNAs and differentially expressed miRNAs. By generating the T-value scatterplot generated by the function 'plot_t_scatter', one can observe a negative correlation between the differential methylation t-values and differential expression t-values. All miRNAs can be classiﬁed into four groups based on the intersection between the differentially methylated miRNAs and differentially expressed miRNAs: hypermethylated–upregulated (hyper–up), hypermethy lated–downregulated (hyper–down), hypomethylated–upregulated (hypo–up), and hypomethylated–downregulated (hypo–down).
+
+```{r out.width="500px", out.height="280px", fig.align='left'}
+p3 <- plot_t_scatter(statM.df, statE.df, FDR_threshold = 0.1)
+
+p3
+```
+We can see that the "hyper–down" group miRNAs dominate all those present both significant differential methylation and differential expression. Take the most significant one, the "hsa-miR-497-5p" as an example, a significant negative correlation can be observed for the promoter methylation and expression levels. 
+
+```{r out.width="500px", out.height="300px", fig.align='center'}
+df <- data.frame("Met" = miRBeta.m["hsa-miR-497-5p",] , "Exp" = logExp.m["hsa-miR-497-5p",], Sample=pheno.v)
+library("ggpubr")
+p4 <- ggscatter(df, x = "Met", y = "Exp", fill="Sample", color = "Sample", main="hsa-miR-497-5p",
+        palette=c("blue", "red"),  outlier.size = 0.3, cex=0.5,
+         cex.main=12, cex.axis=6, notch=F,  xlab = "Met", ylab="Exp", 
+         add="reg.line", add.params=list(color="#764C29", fill="lightgray"), 
+         conf.int=FALSE, cor.coef=FALSE, cor.coeff.args=list(method="pearson", label.sep="\n"),
+         ggtheme = theme_bw()) 
+p4 <- p4 + stat_cor(label.x = max(df$Met)*0.6, label.y=max(df$Exp)*0.5, label.sep = "\n") + theme( plot.title=element_text(hjust=0.5))
+
+p4
+```
+
+
+# Session Info
+
+```{r}
+# print session info
+sessionInfo()
+```
+
