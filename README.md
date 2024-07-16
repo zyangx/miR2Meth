@@ -1,6 +1,6 @@
 
 # miR2Meth
-##Cell Type Deconvolution using miRNA Expression Profliling"
+## Dissecting DNA methylation heterogenity at miRNA promoters
 
 ================
 
